@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Super Mini Mario - bCreators aa (Progreso Guardado)</title>
+    <style>
+        body { margin: 0; background: #000; display: flex; flex-direction: column; align-items: center; font-family: 'Arial', sans-serif; color: white; overflow: hidden; }
+        .stats { margin: 10px; font-size: 18px; background: rgba(0,0,0,0.6); padding: 10px 25px; border-radius: 30px; border: 2px solid #5c94fa; z-index: 10; display: flex; align-items: center; gap: 15px; }
+        canvas { border: 3px solid #444; background: #c17d72; cursor: pointer; }
+        .gold-text { color: #ffd700; font-weight: bold; text-shadow: 0 0 5px gold; }
+        
+        /* Botón para resetear progreso */
+        .reset-btn { background: #ff4444; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+        .reset-btn:hover { background: #cc0000; }
+
+        #overlay {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 900px; height: 500px;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            z-index: 20;
+            border: 3px solid #444;
+        }
+        #overlay h1 { font-size: 50px; color: #5c94fa; margin-bottom: 10px; letter-spacing: 5px; }
+        #overlay p { font-size: 20px; color: #ffd700; animation: blink 1s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div id="overlay" onclick="startGame()">
+        <h1>bCreators aa</h1>
+        <p id="startText">Haz clic para empezar</p>
+    </div>
+
+    <div class="stats">
+        <span>Nivel: <span id="levelDisplay" class="gold-text">1</span></span>
+        <span>| Bioma: <span id="biomeDisplay">Pradera</span></span>
+        <button class="reset-btn" onclick="resetTotalProgress()">Reiniciar Todo</button>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 900;
+canvas.height = 500;
+
+let gameStarted = false;
+let currentLevel = 1;
+const gravity = 0.6;
+let platforms = [];
+let hazards = [];
+let clouds = [];
+let weatherParticles = []; 
+let goal = { x: 0, y: 0, size: 25 }; 
+let cameraX = 0;
+let maxMapWidth = 0;
+
+let currentConfig = { bg: "#c17d72", plat: "#4e342e", grass: "#2e7d32", type: "normal" };
+
+const player = {
+    x: 50, y: 400, w: 15, h: 15,
+    velX: 0, velY: 0, speed: 4.5, 
+    jump: -11,
+    grounded: false
+};
+
+// --- LÓGICA DE GUARDADO ---
+function saveProgress() {
+    localStorage.setItem('bCreators_mario_level', currentLevel);
+}
+
+function loadProgress() {
+    const savedLevel = localStorage.getItem('bCreators_mario_level');
+    if (savedLevel) {
+        currentLevel = parseInt(savedLevel);
+        document.getElementById('levelDisplay').innerText = currentLevel;
+        document.getElementById('startText').innerText = "Continuar Nivel " + currentLevel;
+    }
+}
+
+function resetTotalProgress() {
+    if(confirm("¿Seguro que quieres borrar tu progreso y volver al Nivel 1?")) {
+        localStorage.removeItem('bCreators_mario_level');
+        location.reload();
+    }
+}
+// --------------------------
+
+const keys = {};
+window.onkeydown = (e) => keys[e.code] = true;
+window.onkeyup = (e) => keys[e.code] = false;
+
+function startGame() {
+    document.getElementById('overlay').style.display = 'none';
+    gameStarted = true;
+    generateLevel(currentLevel);
+}
+
+function seededRandom(seed) {
+    const x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+}
+
+function updateBiome(lvl) {
+    let display = "Pradera";
+    currentConfig = { bg: "#c17d72", plat: "#4e342e", grass: "#2e7d32", type: "normal" };
+
+    if (lvl >= 10 && lvl <= 15) {
+        currentConfig.bg = "#1a1a2e"; display = "Noche Especial";
+    } else if (lvl > 400) {
+        currentConfig.bg = "#050510"; currentConfig.plat = "#1a2533"; currentConfig.grass = "#ffffff";
+        currentConfig.type = "snow"; display = "Navidad Nocturna";
+    } else if (lvl > 300) {
+        currentConfig.bg = "#edc9af"; currentConfig.plat = "#a0522d"; currentConfig.grass = "#d2b48c";
+        currentConfig.type = "desert"; display = "Desierto Seco";
+    } else if (lvl > 200) {
+        currentConfig.bg = "#3e4a59"; currentConfig.plat = "#2c343f"; currentConfig.grass = "#1d252d";
+        currentConfig.type = "rain"; display = "Clima de Lluvia";
+    } else if (lvl > 100) {
+        currentConfig.bg = "#87ceeb"; currentConfig.plat = "#4e342e"; currentConfig.grass = "#32cd32";
+        currentConfig.type = "sunny"; display = "Día Soleado";
+    }
+    document.getElementById('biomeDisplay').innerText = display;
+}
+
+function generateLevel(lvl) {
+    updateBiome(lvl);
+    platforms = []; hazards = []; clouds = []; weatherParticles = [];
+    cameraX = 0;
+    let seed = lvl * 123.456; 
+    
+    platforms.push({x: 0, y: 450, w: 150, h: 50});
+
+    let lastX = 100;
+    let lastY = 450;
+    let numPlats = 15 + Math.floor(lvl * 0.05); 
+
+    for (let i = 0; i < numPlats; i++) {
+        seed += 0.7;
+        let r = seededRandom(seed);
+        let gapX = 50 + (r * 60); 
+        let nextX = lastX + gapX;
+        let diffY = (seededRandom(seed + 0.1) * 140) - 70; 
+        let nextY = lastY + diffY;
+
+        if (nextY < 160) nextY = 180;
+        if (nextY > 440) nextY = 440;
+
+        let pW = Math.max(45, 90 - (r * 20));
+        platforms.push({x: nextX, y: nextY, w: pW, h: 15});
+
+        if (seededRandom(seed + 0.3) > 0.5) {
+            let parts = [];
+            for(let j=0; j<4; j++) {
+                parts.push({ dx: (seededRandom(seed+j)*30)-15, dy: (seededRandom(seed+j+1)*12)-6, rad: 8+seededRandom(seed+j+2)*12 });
+            }
+            clouds.push({ x: nextX, y: 40 + seededRandom(seed+0.4)*130, parts: parts });
+        }
+
+        if (currentConfig.type === "desert" && seededRandom(seed+0.8) > 0.75) {
+            platforms.push({x: nextX + 15, y: nextY - 20, w: 6, h: 20, deco: "cactus"});
+        }
+
+        lastX = nextX + pW;
+        lastY = nextY;
+    }
+    
+    goal.x = lastX - 55;
+    goal.y = lastY - 40;
+    maxMapWidth = lastX; 
+    platforms.push({x: maxMapWidth, y: 0, w: 1200, h: 500, type: "solid_back", color: currentConfig.plat});
+
+    for(let i=0; i<60; i++) {
+        weatherParticles.push({x: Math.random()*canvas.width, y: Math.random()*canvas.height, s: 1.5+Math.random()*3, a: Math.random()*Math.PI});
+    }
+}
+
+function update() {
+    if (!gameStarted) return;
+
+    if (keys['ArrowRight'] || keys['KeyD']) player.velX = player.speed;
+    else if (keys['ArrowLeft'] || keys['KeyA']) player.velX = -player.speed;
+    else player.velX *= 0.8;
+
+    if ((keys['ArrowUp'] || keys['KeyW']) && player.grounded) {
+        player.velY = player.jump; player.grounded = false;
+    }
+
+    player.velY += gravity;
+    player.x += player.velX; player.y += player.velY;
+
+    if (player.x > canvas.width / 2) cameraX = player.x - canvas.width / 2;
+    if (player.x < 0) player.x = 0; 
+    if (player.x + player.w > maxMapWidth) player.x = maxMapWidth - player.w; 
+
+    weatherParticles.forEach(p => {
+        if (currentConfig.type === "rain") { p.y += p.s * 2.5; p.x += 0.5; }
+        if (currentConfig.type === "snow") { p.y += p.s * 0.6; p.x += Math.sin(p.y/25); }
+        if (p.y > canvas.height) p.y = -20;
+    });
+
+    player.grounded = false;
+    platforms.forEach(p => {
+        if (player.x < p.x + p.w && player.x + player.w > p.x && player.y < p.y + p.h && player.y + player.h > p.y) {
+            if (p.type === "solid_back") {
+                if (player.x + player.w > p.x && player.velX > 0) player.x = p.x - player.w;
+            } else if (!p.deco) {
+                let oX = (player.x + player.w/2 < p.x + p.w/2) ? (player.x + player.w) - p.x : (p.x + p.w) - player.x;
+                let oY = (player.y + player.h/2 < p.y + p.h/2) ? (player.y + player.h) - p.y : (p.y + p.h) - player.y;
+                if (oX < oY) {
+                    if (player.x + player.w/2 < p.x + p.w/2) player.x -= oX; else player.x += oX;
+                } else {
+                    if (player.y + player.h/2 < p.y + p.h/2) { player.y -= oY; player.velY = 0; player.grounded = true; }
+                    else { player.y += oY; player.velY = 1; }
+                }
+            }
+        }
+    });
+
+    if (player.x < goal.x + goal.size && player.x + player.w > goal.x && player.y < goal.y + goal.size && player.y + player.h > goal.y) {
+        currentLevel++;
+        document.getElementById('levelDisplay').innerText = currentLevel;
+        saveProgress(); // Guardamos cuando pasa de nivel
+        resetLevel();
+    }
+    if (player.y > canvas.height) resetLevel();
+}
+
+function resetLevel() {
+    player.x = 50; player.y = 350; player.velX = 0; player.velY = 0;
+    cameraX = 0; generateLevel(currentLevel);
+}
+
+function draw() {
+    ctx.fillStyle = currentConfig.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (currentConfig.type === "sunny") {
+        ctx.fillStyle = "#fff176"; ctx.beginPath(); ctx.arc(750, 70, 35, 0, Math.PI*2); ctx.fill();
+    }
+    
+    ctx.save();
+    ctx.translate(-cameraX, 0);
+
+    ctx.fillStyle = (currentConfig.type === "snow" || currentConfig.type === "rain") ? "rgba(200,200,220,0.3)" : "rgba(255, 250, 200, 0.4)";
+    clouds.forEach(c => {
+        c.parts.forEach(part => {
+            ctx.beginPath(); ctx.arc(c.x + part.dx, c.y + part.dy, part.rad, 0, Math.PI * 2); ctx.fill();
+        });
+    });
+
+    platforms.forEach(p => {
+        if (p.type === "solid_back") {
+            ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.w, p.h);
+        } else if (p.deco === "cactus") {
+            ctx.fillStyle = "#2e7d32"; ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.fillRect(p.x-3, p.y+4, 12, 3); 
+        } else {
+            ctx.fillStyle = currentConfig.plat; ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.fillStyle = currentConfig.grass; ctx.fillRect(p.x, p.y, p.w, 4);
+        }
+    });
+
+    ctx.fillStyle = (currentConfig.type === "rain") ? "#4fc3f7" : "#ffffff";
+    weatherParticles.forEach(p => {
+        if (currentConfig.type === "rain") ctx.fillRect(p.x + cameraX, p.y, 1, 10);
+        if (currentConfig.type === "snow") { 
+            ctx.beginPath(); ctx.arc(p.x + cameraX, p.y, 2.5, 0, Math.PI*2); ctx.fill(); 
+        }
+    });
+
+    ctx.fillStyle = "#ffd700"; ctx.shadowBlur = 15; ctx.shadowColor = "gold";
+    ctx.beginPath(); ctx.arc(goal.x + goal.size/2, goal.y + goal.size/2, goal.size/2, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); ctx.shadowBlur = 0;
+
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(player.x, player.y, player.w, player.h);
+    ctx.strokeStyle = "#000"; ctx.strokeRect(player.x, player.y, player.w, player.h);
+
+    ctx.restore();
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+// Iniciamos cargando el progreso
+loadProgress();
+loop();
+</script>
+</body>
+</html>
